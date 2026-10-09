@@ -1,0 +1,10 @@
+.env
+.streamlit/secrets.toml
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.cache/
+cache/
+.flashrank/
+flashrank_cache/
