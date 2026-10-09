@@ -12,4 +12,3 @@ pypdf
 sentence-transformers
 flashrank
 langsmith
-rank-bm25

@@ -251,21 +251,20 @@ FLASHRANK_CACHE_DIR = (
 # RAG CONFIGURATION
 # ============================================================
 
-COLLECTION_NAME = (
-    "courier_logistics_policy"
-)
+COLLECTION_NAME = "courier_logistics_policy"
 
-EMBEDDING_MODEL = (
-    "models/gemini-embedding-2-preview"
-)
+EMBEDDING_MODEL = "models/gemini-embedding-2-preview"
 
-LLM_MODEL = (
-    "gemini-3.5-flash-lite"
-)
+# Gemini models for comparison
+LLM_MODELS = [
+    "gemini-3.5-flash-lite",  # Current model
+    "gemini-3.8-flash",       # Model 2
+    "gemini-3.7-flash",       # Model 3
+]
 
-FLASHRANK_MODEL = (
-    "ms-marco-MiniLM-L-12-v2"
-)
+LLM_MODEL = LLM_MODELS[0]  # Keep current default
+
+FLASHRANK_MODEL = "ms-marco-MiniLM-L-12-v2"
 
 
 # ============================================================
@@ -1090,15 +1089,12 @@ def get_embeddings():
 # ============================================================
 
 @st.cache_resource
-def get_llm():
+def get_llm(model_name=None):
     if not API_KEY:
-        raise ValueError(
-            "Google API key is missing. Add GOOGLE_API_KEY "
-            "to your .env file or Streamlit secrets."
-        )
+        raise ValueError("Google API key is missing.")
 
     return ChatGoogleGenerativeAI(
-        model=LLM_MODEL,
+        model=model_name or LLM_MODEL,
         google_api_key=API_KEY,
         temperature=0,
     )
@@ -1760,25 +1756,21 @@ ANSWER
     # --------------------------------------------------------
     # CALL GEMINI
     # --------------------------------------------------------
-
-    # CALL GEMINI WITH FALLBACK
     
     try:
-        llm = get_llm()
+        llm = get_llm(
+            st.session_state.get("selected_llm_model", LLM_MODEL))
         response = llm.invoke(prompt)
 
     except Exception as error:
         print(
             f"Gemini answer generation failed: "
-            f"{type(error).__name__}: {error}"
-    )
-
-    return (
-        "⚠️ The AI service is temporarily unavailable "
-        "due to a usage limit or service issue. "
-        "Please try again later. Your policy documents "
-        "are still available."
-    )
+            f"{type(error).__name__}: {error}")
+        return (
+            "⚠️ The AI service is temporarily unavailable "
+            "due to a usage limit or service issue. "
+            "Please try again later. Your policy documents "
+            "are still available.")
 
     # --------------------------------------------------------
     # EXTRACT RESPONSE CONTENT
@@ -1830,6 +1822,80 @@ ANSWER
         content
     ).strip()
 
+
+
+@traceable(name="gemini_model_comparison")
+def test_gemini_model(model_name, question, documents):
+    """Test a Gemini model using retrieved policy documents."""
+
+    if not documents:
+        return "No relevant policy documents found."
+
+    context_parts = []
+
+    for doc in documents:
+        # Your retrieval functions return dictionaries
+        if isinstance(doc, dict):
+            metadata = doc.get("metadata", {}) or {}
+            text = doc.get("text", "")
+        else:
+            # Also support LangChain Document objects
+            metadata = getattr(doc, "metadata", {}) or {}
+            text = getattr(doc, "page_content", "")
+
+        if not text:
+            continue
+
+        source = metadata.get(
+            "file_name",
+            metadata.get("source", "Unknown")
+        )
+        page = metadata.get("page", "Unknown")
+
+        context_parts.append(
+            f"Source: {source}\n"
+            f"Page: {page}\n"
+            f"Content: {text}"
+        )
+
+    if not context_parts:
+        return "No usable policy context was found."
+
+    context = "\n\n".join(context_parts)
+
+    prompt = f"""
+You are a Courier and Logistics Policy Assistant.
+
+Answer the question ONLY using the policy context.
+Do not invent information.
+
+Policy context:
+{context}
+
+Question:
+{question}
+
+Answer:
+"""
+
+    llm = ChatGoogleGenerativeAI(
+        model=model_name,
+        google_api_key=API_KEY,
+        temperature=0,
+    )
+
+    response = llm.invoke(prompt)
+    content = response.content
+
+    if isinstance(content, list):
+        content = "\n".join(
+            part.get("text", "")
+            if isinstance(part, dict)
+            else str(part)
+            for part in content
+        )
+
+    return str(content).strip()
 
 # ============================================================
 # DISPLAY SOURCES
@@ -2172,6 +2238,13 @@ for message in st.session_state.messages:
 # CHAT INPUT
 # ============================================================
 
+selected_model = st.selectbox(
+    "Choose Gemini model",
+    LLM_MODELS,
+    index=0,
+    key="selected_llm_model",
+)
+
 query = st.chat_input(
     "Ask your courier/logistics question..."
 )
@@ -2304,5 +2377,4 @@ if query:
                     }
                 )
 
-             
 
